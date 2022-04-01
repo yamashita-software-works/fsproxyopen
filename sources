@@ -1,0 +1,79 @@
+TARGETTYPE=PROGRAM
+TARGETNAME=fsproxyopen
+TARGETPATH=obj
+UMENTRY=wwinmain
+UMTYPE=windows
+
+_NT_TARGET_VERSION=$(_NT_TARGET_VERSION_WIN7)
+
+#
+# We must setup the SDK install root path.
+#
+!ifndef SDKINCLUDE
+SDKINCLUDE=C:\WinSDK\7.1\Include
+!endif
+
+NOT_LEAN_AND_MEAN=1
+
+!if $(FREEBUILD)
+USE_MSVCRT=1
+!else
+USE_LIBCMT=1
+!endif
+
+!if !$(FREEBUILD)
+DEBUG_CRTS=1
+!endif
+
+USE_PDB_TO_COMPILE=1
+
+#
+# Compiler Options
+#
+C_DEFINES=$(C_DEFINES) -D_WINDOWS -DUNICODE -D_UNICODE
+
+!if $(FREEBUILD)
+C_DEFINES=$(C_DEFINES)
+!else
+C_DEFINES=$(C_DEFINES) -D_DEBUG -DDEBUG -D_HEAP_CHECK=1 -D_COMMONLIB
+!endif
+
+!ifdef NONSERVICE
+C_DEFINES=$(C_DEFINES) -D_NONSERVICE_DEBUG_MODE=1
+!endif
+
+#
+# /EHs enable C++ EH (no SEH exceptions)
+# /EHc extern "C" defaults to nothrow
+#
+#USER_C_FLAGS=-EHsc
+
+#
+# Avoid the following warnings:
+# "cl : warning D9025 : overriding '/EHs-' with '/EHs'"
+# specified 'EH' is exception handler (Native Error Handler)
+#
+#USE_NATIVE_EH=1
+
+INCLUDES=$(INCLUDES);$(SDK_INC_PATH);$(DDK_INC_PATH);$(SDKINCLUDE)
+
+#
+# Linker Options
+#
+
+#!ifdef _SYMBOL_STORE_PATH
+#LINKER_FLAGS=$(LINKER_FLAGS) -PDB:$(_SYMBOL_STORE_PATH)\$(TARGET_DIRECTORY)\$(TARGETNAME).pdb
+#!endif
+
+SOURCES = \
+	fsproxyopen.cpp \
+	fsproxyopen.rc
+
+LINKLIBS=\
+	$(SDK_LIB_PATH)\kernel32.lib \
+	$(SDK_LIB_PATH)\user32.lib \
+	$(SDK_LIB_PATH)\advapi32.lib \
+	$(SDK_LIB_PATH)\oldnames.lib \
+	$(SDK_LIB_PATH)\strsafe.lib \
+	$(DDK_LIB_PATH)\ntstrsafe.lib \
+	$(DDK_LIB_PATH)\ntdll.lib
