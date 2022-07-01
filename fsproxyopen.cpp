@@ -35,13 +35,13 @@ VOID MainProc(LPWSTR);
 
 VOID StartupService()
 {
-  SERVICE_TABLE_ENTRY DispatchTable[] =
-   {
-      { TEXT("FsProxyOpen"), (LPSERVICE_MAIN_FUNCTION) ServiceStart },
-      { NULL, NULL }
-   };
+	SERVICE_TABLE_ENTRY DispatchTable[] =
+	{
+		{ TEXT("FsProxyOpen"), (LPSERVICE_MAIN_FUNCTION) ServiceStart },
+		{ NULL, NULL }
+	};
 
-   StartServiceCtrlDispatcher( DispatchTable );
+	StartServiceCtrlDispatcher( DispatchTable );
 }
 
 SERVICE_STATUS          ServiceStatus;
@@ -49,7 +49,7 @@ SERVICE_STATUS_HANDLE   ServiceStatusHandle;
 HANDLE                  hStopEvent;
 
 #ifdef _DEBUG
-void _cdecl _DebugTrace(LPCWSTR lpszFormat, ...)
+void _cdecl DebugTrace(LPCWSTR lpszFormat, ...)
 {
 	va_list args;
 	va_start(args, lpszFormat);
@@ -69,7 +69,7 @@ void _cdecl _DebugTrace(LPCWSTR lpszFormat, ...)
 
 	va_end(args);
 }
-#define DBGTRACE  _DebugTrace
+#define DBGTRACE  DebugTrace
 #define DBGPRINT  DbgPrint
 #else
 #define DBGTRACE  __noop
@@ -123,7 +123,8 @@ VOID WINAPI ServiceCtrlHandler (DWORD Opcode)
 			break;
 	}
 
-	// Send current status.
+	//
+	// Set current status.
 	//
 	if (!SetServiceStatus(ServiceStatusHandle,&ServiceStatus))
 	{
@@ -135,7 +136,6 @@ VOID WINAPI ServiceCtrlHandler (DWORD Opcode)
 PWSTR AllocPipeName(PWSTR pszName)
 {
 	SIZE_T cch = wcslen(pszName) + (_countof(PIPENAMEPREFIX) - 1) + 1;
-
 	PWSTR pszPipename;
 	pszPipename = (PWSTR)_AllocMemory( cch * sizeof(WCHAR) );
 	wcscpy_s(pszPipename,cch,PIPENAMEPREFIX);
@@ -147,6 +147,8 @@ VOID ServiceStart(DWORD argc, LPTSTR *argv)
 {
 	DWORD status;
 	PWSTR pszPipename = NULL;
+
+	DBGTRACE(L"Enter StartService Handler.\n");
 
 	DWORD i;
 	for(i = 0; i < argc; i++)
@@ -162,9 +164,10 @@ VOID ServiceStart(DWORD argc, LPTSTR *argv)
 
 	if( pszPipename == NULL )
 	{
+		//
 		// set default pipename
 		//
-		pszPipename = AllocPipeName(DEFAULTPIPENAME);
+		pszPipename = AllocPipeName(FS_DEFAULTPIPENAME);
 	}
 
 	// register service handler
@@ -187,7 +190,7 @@ VOID ServiceStart(DWORD argc, LPTSTR *argv)
 		// prepare non-named manual reset event.
 		hStopEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
 
-
+		//
 		// Initialization complete - report running status.
 		//
 		ServiceStatus.dwCurrentState       = SERVICE_RUNNING;
@@ -206,8 +209,6 @@ VOID ServiceStart(DWORD argc, LPTSTR *argv)
 		if( pszPipename != NULL )
 		{
 			DBGTRACE(L"Using pipename %s\n",pszPipename);
-
-			DBGTRACE(L"Run worker thread.\n");
 
 			HANDLE hThread;
 			hThread = CreateWorkerThread(pszPipename);
@@ -237,7 +238,7 @@ VOID ServiceStart(DWORD argc, LPTSTR *argv)
 	ServiceStatus.dwServiceSpecificExitCode = 0;
 	ServiceStatus.dwCheckPoint              = 0;
 	ServiceStatus.dwWaitHint                = 0;
-    SetServiceStatus(ServiceStatusHandle, &ServiceStatus);
+	SetServiceStatus(ServiceStatusHandle, &ServiceStatus);
 
 	DBGTRACE(L"Exit StartService Handler.\n");
 }
@@ -391,6 +392,86 @@ OpenFile_U(
 	return Status;
 }
 
+NTSTATUS
+CreateFile_U(
+	PHANDLE phFile,
+	HANDLE hRoot,
+	UNICODE_STRING *pNtPathName,
+	ULONG DesiredAccess,
+	ULONG ShareAccess,
+	ULONG CreateOptions,
+	ULONG FileAttributes,
+	ULONG CreateDisposition
+	)
+{
+	OBJECT_ATTRIBUTES ObjectAttributes;
+	IO_STATUS_BLOCK IoStatus = {0};
+	NTSTATUS Status;
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+
+	InitializeObjectAttributes(&ObjectAttributes,pNtPathName,0,hRoot,NULL);
+
+	Status = NtCreateFile(
+				&hFile,
+				DesiredAccess,
+				&ObjectAttributes,
+				&IoStatus,
+				0,
+				FileAttributes,
+				ShareAccess,
+				CreateDisposition,
+				CreateOptions,
+				0x0,
+				0x0);
+
+	if( Status != STATUS_SUCCESS )
+	{
+		hFile = INVALID_HANDLE_VALUE;
+	}
+
+	*phFile = hFile;
+
+	RtlSetLastWin32Error( RtlNtStatusToDosError(Status) );
+
+	return Status;
+}
+
+BOOL
+EnablePrivilege(
+	LONG lLuid,
+	BOOL bEnable
+	)
+{
+	HANDLE hToken;
+	TOKEN_PRIVILEGES token;
+	BOOL bResult = FALSE;
+	LUID Luid;
+
+	Luid = RtlConvertLongToLuid(lLuid);
+
+	if (NtOpenProcessToken(GetCurrentProcess(),
+						  TOKEN_ADJUST_PRIVILEGES,
+						  &hToken) == 0)
+	{
+	    token.PrivilegeCount = 1;
+	    token.Privileges[0].Luid  = Luid;
+	    token.Privileges[0].Attributes = bEnable ? SE_PRIVILEGE_ENABLED : 0;
+
+		if(NtAdjustPrivilegesToken(hToken,
+					FALSE,
+			        &token,
+				    sizeof(TOKEN_PRIVILEGES),
+					NULL,
+					NULL) == 0)
+		{
+			bResult = TRUE;
+		}
+		NtClose(hToken);
+	}
+
+	return bResult;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 typedef struct _WORKERTHREAD_PARAM
@@ -398,22 +479,24 @@ typedef struct _WORKERTHREAD_PARAM
 	HANDLE hPipe;
 } WORKERTHREAD_PARAM;
 
-DWORD DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE hFileHandle,HANDLE *phReturnHandle,ULONG *ErrorCode)
+DWORD DupHandle(ULONG ProcessId,HANDLE hFileHandle,HANDLE *phReturnHandle,ULONG *ErrorCode)
 {
 	HANDLE hTargetProcess = NULL;
 	HANDLE hTargetHandle = INVALID_HANDLE_VALUE;
 	DWORD dwError = 0;
 	NTSTATUS Status;
 
+	//
 	// Get target process handle
 	//
-	hTargetProcess = OpenProcess(PROCESS_DUP_HANDLE,FALSE,(DWORD)pOpen->ProcessId);
+	hTargetProcess = OpenProcess(PROCESS_DUP_HANDLE,FALSE,ProcessId);
 	if( hTargetProcess == NULL )
 	{
 		*ErrorCode = FSPO_ERROR_REASON_PROCESS;
 		return NULL;
 	}
 
+	//
 	// Duplicate file handle
 	//
 	if( !DuplicateHandle(
@@ -432,13 +515,14 @@ DWORD DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE hFileHandle,HANDLE *phReturnH
 	return dwError;
 }
 
-DWORD OpenSplitPath_DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE *phReturnHandle,ULONG *ErrorCode)
+DWORD OpenFile_DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE *phReturnHandle,ULONG *ErrorCode)
 {
 	HANDLE hHandle = INVALID_HANDLE_VALUE;
 	HANDLE hRoot = INVALID_HANDLE_VALUE;
 	DWORD dwError = 0;
 	NTSTATUS Status;
 
+	//
 	// Split the full path into volume root and relative path.
 	//
 	UNICODE_STRING usVolumeRoot;
@@ -446,6 +530,7 @@ DWORD OpenSplitPath_DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE *phReturnHandle
 
 	SplitPath_U(pOpen->Name,&usVolumeRoot,&usRelativePath);
 
+	DBGTRACE(L"OpenFile\n");
 	DBGTRACE(L"Volume:%wZ\n",&usVolumeRoot);
 	DBGTRACE(L"Path  :%wZ\n",&usRelativePath);
 
@@ -456,10 +541,13 @@ DWORD OpenSplitPath_DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE *phReturnHandle
 
 	if( Status == STATUS_SUCCESS )
 	{
+		if( pOpen->DesiredAccess & ACCESS_SYSTEM_SECURITY )
+			EnablePrivilege(SE_SECURITY_PRIVILEGE,TRUE);
+		
 		if( usRelativePath.Length != 0 )
 		{
 			//
-			// Volume Relative Path Open
+			// Open Volume Relative Path
 			//
 			Status = OpenFile_U(&hHandle,hRoot,&usRelativePath,
 							pOpen->DesiredAccess,
@@ -468,26 +556,129 @@ DWORD OpenSplitPath_DupHandle(FS_PIPE_MSG_OPENFILE *pOpen,HANDLE *phReturnHandle
 		}
 		else
 		{
-			// volume device open
-			DBGTRACE(L"Volume open mode\n");
+			//
+			// Open Volume Device or Volume Root Directory
+			//
+			DBGTRACE(L"Volume/Root directory open mode\n");
 			Status = OpenFile_U(&hHandle,NULL,&usVolumeRoot,
 							pOpen->DesiredAccess,
 							pOpen->ShareAccess,
 							pOpen->OpenOptions);
 		}
 
+		if( pOpen->DesiredAccess & ACCESS_SYSTEM_SECURITY )
+			EnablePrivilege(SE_SECURITY_PRIVILEGE,FALSE);
+
 		if( Status == STATUS_SUCCESS )
 		{
-			dwError = DupHandle(pOpen,hHandle,phReturnHandle,ErrorCode);
+			dwError = DupHandle((DWORD)pOpen->ProcessId,hHandle,phReturnHandle,ErrorCode);
 
+			DBGTRACE(L"File Duplicate Handle Status   : 0x%08X\n",dwError);
+
+			//
 			// Handle to close is the original handle (hHandle) only.
-			// hTargetHandle opens in the other process, so don't close it here.
+			// *phReturnHandle opens in the other process, so don't close it here.
 			//
 			CloseHandle(hHandle);
 		}
 		else
 		{
 			DBGTRACE(L"File Open Status   : 0x%08X\n",Status);
+
+			*ErrorCode = FSPO_ERROR_REASON_OPEN_ROOT_RELATIVE_PATH;
+			dwError = RtlNtStatusToDosError( Status );
+		}
+
+		CloseHandle(hRoot);
+	}
+	else
+	{
+		DBGTRACE(L"*Volume Open Status : 0x%08X\n",Status);
+
+		*ErrorCode = FSPO_ERROR_REASON_OPEN_VOLUME_ROOT;
+		dwError = RtlNtStatusToDosError( Status );
+	}
+
+	DBGTRACE(L"\n");
+
+	SetLastError(dwError);
+
+	return dwError;
+}
+
+DWORD CreateFile_DupHandle(FS_PIPE_MSG_CREATEFILE *pCreate,HANDLE *phReturnHandle,ULONG *ErrorCode)
+{
+	HANDLE hHandle = INVALID_HANDLE_VALUE;
+	HANDLE hRoot = INVALID_HANDLE_VALUE;
+	DWORD dwError = 0;
+	NTSTATUS Status;
+
+	//
+	// Split the full path into volume root and relative path.
+	//
+	UNICODE_STRING usVolumeRoot;
+	UNICODE_STRING usRelativePath;
+
+	SplitPath_U(pCreate->Name,&usVolumeRoot,&usRelativePath);
+
+	DBGTRACE(L"CreateFile\n");
+	DBGTRACE(L"Volume:%wZ\n",&usVolumeRoot);
+	DBGTRACE(L"Path  :%wZ\n",&usRelativePath);
+
+	//
+	// Open volume root directory
+	//
+	Status = OpenFile_U(&hRoot,NULL,&usVolumeRoot,FILE_GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,0);
+
+	if( Status == STATUS_SUCCESS )
+	{
+		if( pCreate->DesiredAccess & ACCESS_SYSTEM_SECURITY )
+			EnablePrivilege(SE_SECURITY_PRIVILEGE,TRUE);
+		
+		if( usRelativePath.Length != 0 )
+		{
+			//
+			// Create Volume Relative Path
+			//
+			Status = CreateFile_U(&hHandle,hRoot,&usRelativePath,
+							pCreate->DesiredAccess,
+							pCreate->ShareAccess,
+							pCreate->CreateOptions,
+							pCreate->FileAttributes,
+							pCreate->CreateDisposition);
+		}
+		else
+		{
+			//
+			// Create Volume Device of Volume Root Directory
+			//
+			DBGTRACE(L"Volume/Root directory create mode\n");
+			Status = CreateFile_U(&hHandle,NULL,&usVolumeRoot,
+							pCreate->DesiredAccess,
+							pCreate->ShareAccess,
+							pCreate->CreateOptions,
+							pCreate->FileAttributes,
+							pCreate->CreateDisposition);
+		}
+
+		if( pCreate->DesiredAccess & ACCESS_SYSTEM_SECURITY )
+			EnablePrivilege(SE_SECURITY_PRIVILEGE,FALSE);
+
+		if( Status == STATUS_SUCCESS )
+		{
+			dwError = DupHandle((DWORD)pCreate->ProcessId,hHandle,phReturnHandle,ErrorCode);
+
+			DBGTRACE(L"File Duplicate Handle Status   : 0x%08X\n",dwError);
+
+			//
+			// Handle to close is the original handle (hHandle) only.
+			// *phReturnHandle opens in the other process, so don't close it here.
+			//
+			CloseHandle(hHandle);
+		}
+		else
+		{
+			DBGTRACE(L"File Create Status   : 0x%08X\n",Status);
 
 			*ErrorCode = FSPO_ERROR_REASON_OPEN_ROOT_RELATIVE_PATH;
 			dwError = RtlNtStatusToDosError( Status );
@@ -525,6 +716,8 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 	HANDLE WaitHandles[2];
 	HANDLE hPipe;
 
+	DBGTRACE(L"Run worker thread.\n");
+
 	__try
 	{
 		hPipe = pThreadParam->hPipe;
@@ -542,11 +735,11 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 			WaitHandles[0] = hPipe;
 			WaitHandles[1] = hStopEvent;
 
-			dw = WaitForMultipleObjects(2,WaitHandles,FALSE,INFINITE);
+			dw = WaitForMultipleObjects(ARRAYSIZE(WaitHandles),WaitHandles,FALSE,INFINITE);
 
 			if( dw == WAIT_OBJECT_0 )
 			{
-				cbMessage = _PIPE_MSGBUFSIZE;
+				cbMessage = FS_PIPE_MSGBUFSIZE;
 				Message = (FS_PIPE_MESSAGE *)_AllocMemory( cbMessage );
 
 				if( Message == NULL )
@@ -554,6 +747,7 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 					break;
 				}
 
+				//
 				// Read a request message
 				//
 				BOOL bLoop;
@@ -569,7 +763,6 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 
 						if( dwError == ERROR_MORE_DATA )
 						{
-#if 1
 							// Truncate trailing data.
 							SetLastError(ERROR_SUCCESS);
 							UCHAR *pDummy = (UCHAR*)_AllocMemory(4096);
@@ -584,9 +777,6 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 									__leave;
 							}
 							_FreeMemory(pDummy);
-#else
-							__leave;
-#endif
 							break;
 						}
 					}
@@ -595,19 +785,33 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 
 				if( GetLastError() == ERROR_SUCCESS )
 				{
-					// Send Response
-					//
 					ULONG ErrorStatus;
 					ULONG ErrorCode;
 
-					ErrorStatus = OpenSplitPath_DupHandle(
-									&Message->OpenFile,
-									&Message->OpenFile.Handle,
-									&ErrorCode);
+					//
+					// Open and Duplicate Handle
+					//
+					if( Message->Type == FST_CREATEFILE )
+					{
+						ErrorStatus = CreateFile_DupHandle(
+										&Message->CreateFile,
+										&Message->CreateFile.Handle,
+										&ErrorCode);
+					}
+					else // Message->Type == FST_OPENFILE
+					{
+						ErrorStatus = OpenFile_DupHandle(
+										&Message->OpenFile,
+										&Message->OpenFile.Handle,
+										&ErrorCode);
+					}
 
 					Message->Result = ErrorStatus;
 					Message->ErrorCode = ErrorCode;
 
+					//
+					// Reply to client
+					//
 					WriteFile(hPipe,Message,cbMessage,&cb,NULL);
 				}
 
@@ -634,11 +838,11 @@ DWORD CALLBACK WorkerThread(PVOID pParam)
 
 DWORD SetAccessAllowUser(EXPLICIT_ACCESS **pea)
 {
-    PSID pEveryoneSID = NULL, pAdminSID = NULL, pUserSID = NULL;
+    PSID pSID=NULL;
     SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
     SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
 
-#define ACE_COUNT 3
+#define ACE_COUNT 8
 	EXPLICIT_ACCESS *ea = (EXPLICIT_ACCESS *)_AllocMemory( sizeof(EXPLICIT_ACCESS) * ACE_COUNT );
 
 	if( ea == NULL )
@@ -653,14 +857,14 @@ DWORD SetAccessAllowUser(EXPLICIT_ACCESS **pea)
     if( AllocateAndInitializeSid(&SIDAuthWorld, 1,
                      SECURITY_WORLD_RID,
                      0, 0, 0, 0, 0, 0, 0,
-                     &pEveryoneSID) )
+                     &pSID) )
     {
 	    ea[dwCount].grfAccessPermissions = FILE_READ_DATA;
 	    ea[dwCount].grfAccessMode = SET_ACCESS;
     	ea[dwCount].grfInheritance = NO_INHERITANCE;
 	    ea[dwCount].Trustee.TrusteeForm = TRUSTEE_IS_SID;
     	ea[dwCount].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pEveryoneSID;
+    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pSID;
 		dwCount++;
 	}
 #endif
@@ -673,19 +877,19 @@ DWORD SetAccessAllowUser(EXPLICIT_ACCESS **pea)
                      SECURITY_BUILTIN_DOMAIN_RID,
                      DOMAIN_ALIAS_RID_ADMINS,
                      0, 0, 0, 0, 0, 0,
-                     &pAdminSID) )
+                     &pSID) )
     {
 	    ea[dwCount].grfAccessPermissions = FILE_ALL_ACCESS;
     	ea[dwCount].grfAccessMode = SET_ACCESS;
 	    ea[dwCount].grfInheritance = NO_INHERITANCE;
     	ea[dwCount].Trustee.TrusteeForm = TRUSTEE_IS_SID;
 	    ea[dwCount].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pAdminSID;
+    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pSID;
 		dwCount++;
 	}
 #endif
 
-#if 1
+#if 0
 	//
     // Create a SID for the BUILTIN\Users group.
 	//
@@ -693,14 +897,52 @@ DWORD SetAccessAllowUser(EXPLICIT_ACCESS **pea)
                      SECURITY_BUILTIN_DOMAIN_RID,
                      DOMAIN_ALIAS_RID_USERS,
                      0, 0, 0, 0, 0, 0,
-                     &pUserSID) )
+                     &pSID) )
     {
 	    ea[dwCount].grfAccessPermissions = FILE_ALL_ACCESS;
     	ea[dwCount].grfAccessMode = SET_ACCESS;
 	    ea[dwCount].grfInheritance = NO_INHERITANCE;
     	ea[dwCount].Trustee.TrusteeForm = TRUSTEE_IS_SID;
 	    ea[dwCount].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pUserSID;
+    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pSID;
+		dwCount++;
+	}
+#endif
+
+#if 1
+	//
+    // Create a SID: S-1-5-2 network
+	//
+    if( AllocateAndInitializeSid(&SIDAuthNT, 1,
+                     SECURITY_NETWORK_RID,
+					 0, 0, 0, 0, 0, 0, 0,
+                     &pSID) )
+    {
+	    ea[dwCount].grfAccessPermissions = FILE_ALL_ACCESS;
+    	ea[dwCount].grfAccessMode = DENY_ACCESS;
+	    ea[dwCount].grfInheritance = NO_INHERITANCE;
+    	ea[dwCount].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	    ea[dwCount].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pSID;
+		dwCount++;
+	}
+#endif
+
+#if 1
+	//
+    // Create a SID: S-1-5-11 authenticated users
+	//
+    if( AllocateAndInitializeSid(&SIDAuthNT, 1,
+                     SECURITY_AUTHENTICATED_USER_RID,
+					 0, 0, 0, 0, 0, 0, 0,
+                     &pSID) )
+    {
+	    ea[dwCount].grfAccessPermissions = FILE_ALL_ACCESS;
+    	ea[dwCount].grfAccessMode = SET_ACCESS;
+	    ea[dwCount].grfInheritance = NO_INHERITANCE;
+    	ea[dwCount].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	    ea[dwCount].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+    	ea[dwCount].Trustee.ptstrName  = (LPTSTR) pSID;
 		dwCount++;
 	}
 #endif
@@ -773,8 +1015,8 @@ HANDLE CreateSecurityDescriptor(PCWSTR pszPipename)
           			PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,
           			PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE|PIPE_WAIT,
           			PIPE_UNLIMITED_INSTANCES,
-          			_PIPE_MSGBUFSIZE,
-          			_PIPE_MSGBUFSIZE,
+          			FS_PIPE_MSGBUFSIZE,
+          			FS_PIPE_MSGBUFSIZE,
           			NMPWAIT_USE_DEFAULT_WAIT,
           			&sa);
 	}
@@ -806,14 +1048,14 @@ HANDLE CreateWorkerThread(PCWSTR pszPipename)
 		return NULL;
 	}
 
-	WORKERTHREAD_PARAM *p = new WORKERTHREAD_PARAM;
+	WORKERTHREAD_PARAM *param = new WORKERTHREAD_PARAM;
 
 	DWORD ThreadId;
 	HANDLE hThread;
 
-	p->hPipe = hPipe;
+	param->hPipe = hPipe;
 
-	hThread = CreateThread(NULL,0,WorkerThread,p,0,&ThreadId);
+	hThread = CreateThread(NULL,0,WorkerThread,param,0,&ThreadId);
 
 	return hThread;
 }
@@ -835,7 +1077,7 @@ VOID MainProc(LPWSTR lpCmdLine)
 		return ;
 	}
 
-	PWSTR pszPipename = AllocPipeName(DEFAULTPIPENAME);
+	PWSTR pszPipename = AllocPipeName(FS_DEFAULTPIPENAME);
 
 	HANDLE hThread;
 	hThread = CreateWorkerThread(pszPipename);
