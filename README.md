@@ -62,7 +62,7 @@ Windows 7 WDKは次の場所からダウンロードできます。
 [https://www.microsoft.com/en-us/download/details.aspx?id=11800](https://www.microsoft.com/en-us/download/details.aspx?id=11800)
 
 
->**Notice**   
+>**Note**   
 Windows 10 のスタートメニューは、インストールされたWDKのビルド環境ショートカットリンクを正しく認識しません。<br>
 そのため、以下の場所にあるショートカットリンクを直接実行するか使い易い場所にコピーしておいてください。<br><br>
 C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Windows Driver Kits\WDK 7600.16385.1\Build Environments\Windows 7<br><br>
