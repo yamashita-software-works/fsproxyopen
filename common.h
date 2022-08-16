@@ -4,51 +4,51 @@
 
 typedef struct _FS_PIPE_MSG_OPENFILE 
 {
-	ULONG64 ProcessId;
-	union {
-		HANDLE Handle;
-		ULONG64 Handle64; // for 32-bit support
-	};
-	ULONG DesiredAccess;
-	ULONG ShareAccess;
-	ULONG OpenOptions;
-	ULONG FileAttributes;
-	ULONG NameLength;
-	WCHAR Name[1];
+    ULONG64 ProcessId;
+    union {
+        HANDLE Handle;
+        ULONG64 Handle64; // for 32-bit support
+    };
+    ULONG DesiredAccess;
+    ULONG ShareAccess;
+    ULONG OpenOptions;
+    ULONG FileAttributes;
+    ULONG NameLength;
+    WCHAR Name[1];
 } FS_PIPE_MSG_OPENFILE;
 
 typedef struct _FS_PIPE_MSG_CREATEFILE
 {
-	ULONG64 ProcessId;
-	union {
-		HANDLE Handle;
-		ULONG64 Handle64; // for 32-bit support
-	};
-	ULONG DesiredAccess;
-	ULONG ShareAccess;
-	ULONG CreateOptions;
-	ULONG FileAttributes;
-	ULONG CreateDisposition;
-	ULONG NameLength;
-	WCHAR Name[1];
+    ULONG64 ProcessId;
+    union {
+        HANDLE Handle;
+        ULONG64 Handle64; // for 32-bit support
+    };
+    ULONG DesiredAccess;
+    ULONG ShareAccess;
+    ULONG CreateOptions;
+    ULONG FileAttributes;
+    ULONG CreateDisposition;
+    ULONG NameLength;
+    WCHAR Name[1];
 } FS_PIPE_MSG_CREATEFILE;
 
 typedef struct _FS_PIPE_MESSAGE
 {
-	union {
-		struct {
-			ULONG Type;
-			ULONG Length;
-			ULONG Result;
-			ULONG ErrorCode;
-		};
-		ULONG Header[16]; // Header size : 64byte
-	};
-	union
-	{
-		FS_PIPE_MSG_OPENFILE OpenFile;
-		FS_PIPE_MSG_CREATEFILE CreateFile;
-	};
+    union {
+        struct {
+            ULONG Type;
+            ULONG Length;
+            ULONG Result;
+            ULONG ErrorCode;
+        };
+        ULONG Header[16]; // Header size : 64byte
+    };
+    union
+    {
+        FS_PIPE_MSG_OPENFILE OpenFile;
+        FS_PIPE_MSG_CREATEFILE CreateFile;
+    };
 } FS_PIPE_MESSAGE;
 
 #pragma pack()

@@ -43,8 +43,8 @@ EXTERN_C
 ULONG
 __cdecl
 DbgPrint(
-	PCHAR,
-	...);
+    PCHAR,
+    ...);
 
 EXTERN_C
 NTSTATUS
@@ -59,13 +59,13 @@ EXTERN_C
 NTSTATUS
 NTAPI
 NtAdjustPrivilegesToken(
-	HANDLE TokenHandle,
-	BOOLEAN DisableAllPrivileges,
-	PTOKEN_PRIVILEGES NewState,
-	ULONG BufferLength,
-	PTOKEN_PRIVILEGES PreviousState,
-	PULONG ReturnLength
-	);
+    HANDLE TokenHandle,
+    BOOLEAN DisableAllPrivileges,
+    PTOKEN_PRIVILEGES NewState,
+    ULONG BufferLength,
+    PTOKEN_PRIVILEGES PreviousState,
+    PULONG ReturnLength
+    );
 
 FORCEINLINE
 LUID
